@@ -47,8 +47,8 @@ class TokenizerWrapper:
 def get_wikitext2(nsamples, seed, seqlen, tokenizer):
     # Load train and test datasets
     # Load local dataset
-    traindata = load_from_disk('./data/wikitext2_train')
-    testdata = load_from_disk('./data/wikitext2_test')
+    traindata = load_from_disk('datasets/wikitext/train')
+    testdata = load_from_disk('datasets/wikitext/test')
 
     # Encode datasets
     trainenc = tokenizer(' '.join(traindata['text']), return_tensors='pt')

@@ -1,0 +1,6 @@
+method	actual_sparsity	ppl_test	num_samples
+pruner-zero-dlp-auto	0.7355	253.3639	128
+method	actual_sparsity	ppl_test	num_samples
+pruner-zero-dlp-auto	0.7380	194.4346	128
+method	actual_sparsity	ppl_test	num_samples
+pruner-zero-dlp-auto	0.7380	194.4346	128

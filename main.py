@@ -7,7 +7,7 @@ import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from importlib.metadata import version
 
-from lib.prune import prune_wanda, prune_magnitude, prune_sparsegpt, prune_ablate, check_sparsity, find_layers, prune_pruner_zero
+from lib.prune import prune_wanda, prune_magnitude, prune_sparsegpt, check_sparsity, find_layers, prune_pruner_zero, prune_pruner_zero_dlp_auto
 from lib.eval import eval_ppl, eval_zero_shot
 
 from lib.gptree import GPTree
@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--sparsity_type", type=str, choices=["unstructured", "4:8", "2:4"])
     parser.add_argument("--prune_method", type=str, choices=["magnitude", "wanda", "sparsegpt", 
                         "ablate_mag_seq", "ablate_wanda_seq", "ablate_mag_iter", 
-                        "ablate_wanda_iter", "search", "pruner-zero", "ablate_prunerzero_seq", "ablate_prunerzero_iter"])
+                        "ablate_wanda_iter", "search", "pruner-zero", "pruner-zero-dlp-auto", "ablate_prunerzero_seq", "ablate_prunerzero_iter"])
     parser.add_argument("--cache_dir", default="llm_weights", type=str )
     parser.add_argument('--use_variant', action="store_true", help="whether to use the wanda variant described in the appendix")
     parser.add_argument('--save', type=str, default=None, help='Path to save results.')
@@ -60,20 +60,41 @@ def main():
         prune_n, prune_m = map(int, args.sparsity_type.split(":"))
 
     model_name = args.model.split("/")[-1]
+    args.model_name = model_name
     print(f"loading llm model {args.model}")
-    model = get_llm(args.model, args.cache_dir)
-    model.eval()
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=False)
 
     device = torch.device("cuda:0")
-    if "30b" in args.model or "65b" in args.model or "70b" in args.model or "33b" in args.model: # for 30b and 65b we use device_map to load onto multiple A6000 GPUs, thus the processing here.
-        device = model.hf_device_map["lm_head"]
-    print("use device ", device)
+    model = None
+    if args.prune_method == "pruner-zero-dlp-auto":
+        args.auto_alpha = True
+        engine = GPTree.load_tree(args.json_tree)
+        model_loader = lambda: get_llm(args.model, args.cache_dir)
+        model = prune_pruner_zero_dlp_auto(
+            args,
+            model_loader,
+            tokenizer,
+            device,
+            prune_n=prune_n,
+            prune_m=prune_m,
+            engine=engine,
+        )
+        model.eval()
+        if "30b" in args.model or "65b" in args.model or "70b" in args.model or "33b" in args.model:
+            device = model.hf_device_map["lm_head"]
+        print("use device ", device)
+    else:
+        model = get_llm(args.model, args.cache_dir)
+        model.eval()
+        if "30b" in args.model or "65b" in args.model or "70b" in args.model or "33b" in args.model: # for 30b and 65b we use device_map to load onto multiple A6000 GPUs, thus the processing here.
+            device = model.hf_device_map["lm_head"]
+        print("use device ", device)
 
 
     start_time = time.time()
     if args.sparsity_ratio != 0:
-        print("pruning starts")
+        if args.prune_method != "pruner-zero-dlp-auto":
+            print("pruning starts")
         if args.prune_method == "wanda":
             prune_wanda(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif args.prune_method == "magnitude":
@@ -81,7 +102,7 @@ def main():
         elif args.prune_method == "sparsegpt":
             prune_sparsegpt(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
         elif "ablate" in args.prune_method:
-            prune_ablate(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m)
+            raise NotImplementedError("ablate methods are not supported in lib.prune for this entrypoint")
         elif "pruner-zero" in args.prune_method:
             engine = GPTree.load_tree(args.json_tree)
             prune_pruner_zero(args, model, tokenizer, device, prune_n=prune_n, prune_m=prune_m, engine=engine)
@@ -99,12 +120,13 @@ def main():
     ppl_test = eval_ppl(args, model, tokenizer, device)
     print(f"wikitext perplexity {ppl_test}")
 
-    if not os.path.exists(args.save):
-        os.makedirs(args.save)
-    save_filepath = os.path.join(args.save, f"log_{args.prune_method}.txt")
-    with open(save_filepath, "a+") as f:
-        print("method\tactual_sparsity\tppl_test\tnum_samples", file=f, flush=True)
-        print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}\t{args.nsamples}", file=f, flush=True)
+    if args.save:
+        if not os.path.exists(args.save):
+            os.makedirs(args.save)
+        save_filepath = os.path.join(args.save, f"log_{args.prune_method}.txt")
+        with open(save_filepath, "a+") as f:
+            print("method\tactual_sparsity\tppl_test\tnum_samples", file=f, flush=True)
+            print(f"{args.prune_method}\t{sparsity_ratio:.4f}\t{ppl_test:.4f}\t{args.nsamples}", file=f, flush=True)
 
     if args.eval_zero_shot:
         accelerate=False
@@ -119,11 +141,12 @@ def main():
         print(results)
 
         # save all results, which is a json object
-        save_filepath = os.path.join(args.save, f"log_lm_eval_{args.prune_method}.json")
-        results_json = json.dumps(results, indent=4)
-        with open(save_filepath, "a+") as file: 
-            file.write(results_json)
-        print(f"Results saved to {save_filepath}")
+        if args.save:
+            save_filepath = os.path.join(args.save, f"log_lm_eval_{args.prune_method}.json")
+            results_json = json.dumps(results, indent=4)
+            with open(save_filepath, "a+") as file: 
+                file.write(results_json)
+            print(f"Results saved to {save_filepath}")
             
 
     if args.save_model:

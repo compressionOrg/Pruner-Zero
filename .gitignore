@@ -1,1 +1,8 @@
 *.pyc
+temp
+*.pth
+__pycache__
+*.egg-info
+dist
+build
+*.egg

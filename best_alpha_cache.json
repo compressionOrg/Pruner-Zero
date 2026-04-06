@@ -1,0 +1,10 @@
+{
+    "Llama-2-7b-hf_sparsity0.7_typeunstructured_prune_func_1": {
+        "alpha": 0.16035665294924553,
+        "ppl": 34.246826171875
+    },
+    "Llama-2-7b-hf_sparsity0.7_typeunstructured_prune_func": {
+        "alpha": 0.2912208504801097,
+        "ppl": 55.74029541015625
+    }
+}
